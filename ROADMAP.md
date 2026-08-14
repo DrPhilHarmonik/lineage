@@ -113,7 +113,7 @@ now makes parity the invariant instead of a judgement call.
 - [x] Dungeon placement invariants
 - [x] Enemy awareness behavior
 
-`python3 -m pytest test_lineage.py` -- 84 tests, no curses, no terminal. Every
+`python3 -m pytest` -- 87 tests, no curses, no terminal. Every
 test runs against a temporary save directory, so a run can never overwrite the
 real bones and dynasty in `~/.lineage`.
 
