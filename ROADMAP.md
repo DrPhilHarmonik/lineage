@@ -72,9 +72,24 @@ Preserve the current tone and lineage fantasy while making the game mechanically
   - `ui.py` for curses drawing and panels
   - `save.py` for persistence
 
-### 12. Add lightweight regression coverage
-- Hero stat application
-- Progression thresholds
-- Save/load compatibility
-- Dungeon placement invariants
-- Enemy awareness behavior
+### 12. Add lightweight regression coverage -- DONE
+- [x] Hero stat application
+- [x] Progression thresholds
+- [x] Save/load compatibility
+- [x] Dungeon placement invariants
+- [x] Enemy awareness behavior
+
+`python3 -m pytest test_lineage.py` -- 84 tests, no curses, no terminal. Every
+test runs against a temporary save directory, so a run can never overwrite the
+real bones and dynasty in `~/.lineage`.
+
+The suite was checked against deliberate regressions rather than assumed to
+work: breaking the XP curve, letting placement stack entities on one tile, and
+making enemies notice through walls each fail it.
+
+One thing it found and does not fix, because the call is a design one:
+**re-applying a skill stacks its stats.** `apply_skill` de-duplicates the skill
+list but not the bonus, so inheriting a skill the hero already has grants it
+twice -- invisible on the character sheet, permanent on the stats.
+`test_applying_the_same_skill_twice_stacks_its_stats` pins the current
+behaviour; if re-learning should be a no-op, change that test first.
