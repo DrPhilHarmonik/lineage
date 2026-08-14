@@ -63,14 +63,48 @@ Preserve the current tone and lineage fantasy while making the game mechanically
 
 ## Priority 5: Reduce Code Friction
 
-### 11. Split the single-file implementation
-- Suggested modules:
-  - `content.py` for skills, items, names, text pools
-  - `models.py` for dataclasses
-  - `generation.py` for rooms and floor construction
-  - `systems.py` for combat, AI, progression
-  - `ui.py` for curses drawing and panels
-  - `save.py` for persistence
+### 11. Split the single-file implementation -- DONE
+
+2267 lines became eight files. `lineage.py` is still the entry point and still
+re-exports the whole game, so `python3 lineage.py`, `saga.py` and the tests all
+work unchanged.
+
+| File | Lines | Holds |
+|---|---|---|
+| `content.py` | 730 | skills, items, enemy/floor tables, every text pool, and the generators that draw from them |
+| `game.py` | 1014 | the `Game` object: one floor, the hero on it, the loop over both |
+| `lineage.py` | 264 | entry point, main menu, and the re-export surface |
+| `models.py` | 174 | hero, enemy, bones, item, room |
+| `generation.py` | 150 | floor construction and FOV |
+| `save.py` | 95 | where the files are, and reading/writing them |
+| `ui.py` | 73 | curses helpers and modal screens |
+| `systems.py` | 30 | progression maths |
+
+Two things deviate from the plan above, both deliberate:
+
+- **`systems.py` holds progression only**, not combat and AI. Those are methods
+  on `Game` that read the floor, the hero, the dynasty and the message log
+  together; moving them into a mixin would have split the file without
+  separating anything. `Game` is the one genuinely large file left, and
+  splitting it usefully is its own piece of work.
+- **The save paths are not re-exported.** `save.py` owns them and everything
+  else asks it. A second name bound to the same `Path` is a name that looks
+  redirectable and is not -- patch it and the writer keeps writing to
+  `~/.lineage`.
+
+Verified rather than assumed:
+
+- 87 tests pass, including three new ones covering the split itself.
+- `saga.py` produces byte-identical results on eight seeds before and after, so
+  the RNG call order is unchanged.
+- The real curses game was driven in a pseudo-terminal with `HOME` redirected:
+  it draws, moves, opens panels, and writes a loadable save. No traceback.
+- `pyflakes` is clean apart from two f-strings that predate the split.
+
+The split did break something the tests did not catch: `saga.py` needed
+`FAMILY_NAMES`, which was not on the hand-written list of names worth
+forwarding. `test_the_facade_re_exports_every_public_name_from_every_module`
+now makes parity the invariant instead of a judgement call.
 
 ### 12. Add lightweight regression coverage -- DONE
 - [x] Hero stat application

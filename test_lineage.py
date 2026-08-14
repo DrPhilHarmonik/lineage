@@ -33,13 +33,23 @@ def temp_save_dir(tmp_path, monkeypatch):
     Autouse rather than opt-in: the failure this prevents is a test overwriting
     the player's real bones and dynasty, which is silent, permanent, and would
     be discovered long after the run that did it.
+
+    Patched on `save`, the module that defines them, and never on `lineage`,
+    which only re-exports the rest of the game. A patched copy on the façade
+    would leave the functions that write the files reading the original names,
+    so the redirect would look applied and the writes would land in
+    `~/.lineage`. The assertion below is what would catch that.
     """
     save_dir = tmp_path / "lineage-saves"
     save_dir.mkdir()
-    monkeypatch.setattr(L, "SAVE_DIR", save_dir)
-    monkeypatch.setattr(L, "BONES_FILE", save_dir / "bones.json")
-    monkeypatch.setattr(L, "DYNASTY_FILE", save_dir / "dynasty.json")
-    monkeypatch.setattr(L, "SAVE_FILE", save_dir / "save.json")
+    monkeypatch.setattr(L.save, "SAVE_DIR", save_dir)
+    monkeypatch.setattr(L.save, "BONES_FILE", save_dir / "bones.json")
+    monkeypatch.setattr(L.save, "DYNASTY_FILE", save_dir / "dynasty.json")
+    monkeypatch.setattr(L.save, "SAVE_FILE", save_dir / "save.json")
+
+    L.save_bones([])
+    assert (save_dir / "bones.json").exists(), "save paths are not redirected"
+    (save_dir / "bones.json").unlink()
     return save_dir
 
 
@@ -332,11 +342,11 @@ def test_a_version_1_save_is_migrated_to_the_current_progression():
     current level would grant."""
     game = saved_game_fixture()
     L.save_game(game)
-    data = json.loads(L.SAVE_FILE.read_text())
+    data = json.loads(L.save.SAVE_FILE.read_text())
     data["progression_version"] = 1
     data["xp"] = 40
     data["level"] = 5
-    L.SAVE_FILE.write_text(json.dumps(data))
+    L.save.SAVE_FILE.write_text(json.dumps(data))
 
     loaded = L.load_saved_game(None, [], [], "Testholt")
 
@@ -347,17 +357,17 @@ def test_a_version_1_save_is_migrated_to_the_current_progression():
 
 def test_a_corrupt_save_is_discarded_rather_than_crashing():
     """A half-written save should cost the run in progress, not the game."""
-    L.SAVE_FILE.write_text("{ this is not json")
+    L.save.SAVE_FILE.write_text("{ this is not json")
 
     assert L.load_saved_game(None, [], [], "Testholt") is None
-    assert not L.SAVE_FILE.exists()
+    assert not L.save.SAVE_FILE.exists()
 
 
 def test_a_structurally_wrong_save_is_discarded_too():
-    L.SAVE_FILE.write_text(json.dumps({"hero": {"nonsense": True}}))
+    L.save.SAVE_FILE.write_text(json.dumps({"hero": {"nonsense": True}}))
 
     assert L.load_saved_game(None, [], [], "Testholt") is None
-    assert not L.SAVE_FILE.exists()
+    assert not L.save.SAVE_FILE.exists()
 
 
 def test_bones_survive_a_round_trip_with_their_relics():
@@ -386,13 +396,13 @@ def test_deleting_the_lineage_keeps_the_bones():
     L.save_bones([L.Bones(hero_name="Ivar", generation=1, floor=1, cause="a rat",
                           skill_id="lucky", x=1, y=1, epitaph="Fell early.")])
     L.save_dynasty([{"name": "Ivar", "floor": 1}])
-    L.SAVE_FILE.write_text("{}")
+    L.save.SAVE_FILE.write_text("{}")
 
     L.delete_lineage_only()
 
     assert L.load_bones() != []
     assert L.load_dynasty() == []
-    assert not L.SAVE_FILE.exists()
+    assert not L.save.SAVE_FILE.exists()
 
 
 # ── 4. Dungeon placement invariants ────────────────────────────────────────────
@@ -654,3 +664,61 @@ def test_fov_never_leaves_the_map():
 
     for x, y in visible:
         assert 0 <= x < L.MAP_W and 0 <= y < L.MAP_H
+
+
+# ── The module split (ROADMAP priority 5, item 11) ─────────────────────────────
+
+def test_the_facade_re_exports_every_public_name_from_every_module():
+    """`import lineage` has to keep reaching the whole game.
+
+    This is not a style rule. Splitting the file broke `saga.py` on exactly this
+    -- it wanted `FAMILY_NAMES`, which was not on the hand-written list of names
+    worth forwarding, and nothing failed until the game was run. A subset chosen
+    by hand is a subset that goes stale, so the invariant is parity.
+    """
+    import inspect
+
+    import content
+    import generation
+    import models
+    import systems
+
+    missing = []
+    for module in (content, models, generation, systems):
+        for name in dir(module):
+            if name.startswith("_") or name == "TYPE_CHECKING":
+                continue
+            obj = getattr(module, name)
+            if inspect.ismodule(obj):
+                continue
+            # Only names this module actually defines; not what it imported.
+            if getattr(obj, "__module__", module.__name__) not in (module.__name__, None):
+                continue
+            if not hasattr(L, name):
+                missing.append(f"{module.__name__}.{name}")
+
+    assert not missing, f"not reachable as lineage.X: {sorted(missing)}"
+
+
+def test_the_save_paths_are_not_re_exported():
+    """The one thing deliberately *not* forwarded.
+
+    A second name bound to the same Path looks redirectable and is not: patch it
+    and the code that writes the files carries on writing to `~/.lineage`. The
+    test fixture patches `save`, and this keeps the tempting alternative from
+    reappearing.
+    """
+    for name in ("SAVE_DIR", "SAVE_FILE", "BONES_FILE", "DYNASTY_FILE"):
+        assert not hasattr(L, name), f"lineage.{name} would be a stale copy of save.{name}"
+
+
+def test_the_headless_saga_still_runs_on_the_split_modules():
+    """`saga.py` is the only consumer of the package besides the game itself,
+    and it exercises models, content and progression together."""
+    import saga
+
+    random.seed(11)
+    lines = saga.run_saga(3)
+
+    assert any("THE CHRONICLE" in line for line in lines)
+    assert any("generations" in line for line in lines)
